@@ -1,9 +1,9 @@
 from setuptools import setup
 import versioneer
 
-requirements = [
-    # package requirements go here
-]
+requirements = ['schimpy','scipy>=1.4','numpy',
+                'matplotlib','scikit-image','scikit-fmm','gdal',
+                'nodepy','pydistmesh','osgeo']
 
 setup(
     name='bismet',
@@ -22,5 +22,14 @@ setup(
         'Programming Language :: Python :: 2.7',
         'Programming Language :: Python :: 3.6',
         'Programming Language :: Python :: 3.7',
-    ]
+        'Programming Language :: Python :: 3.8'
+    ],
+    entry_points={
+        'console_scripts': [
+            'contour_smooth=contour_smooth:main',
+            'prep_mesh_sdist=prep_mesh_sdist:main',
+            'remove_skewed_cells=remove_skewed_cells:main',
+            'sdist_to_direction=sdist_to_direction:main'
+        ],
+    }
 )
