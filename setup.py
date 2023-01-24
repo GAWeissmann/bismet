@@ -3,7 +3,7 @@ import versioneer
 
 requirements = ['schimpy','scipy>=1.4','numpy',
                 'matplotlib','scikit-image','scikit-fmm','gdal',
-                'nodepy','pydistmesh','osgeo']
+                'nodepy','pydistmesh']
 
 setup(
     name='bismet',
