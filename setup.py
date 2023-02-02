@@ -26,10 +26,10 @@ setup(
     ],
     entry_points={
         'console_scripts': [
-            'contour_smooth=contour_smooth:main',
-            'prep_mesh_sdist=prep_mesh_sdist:main',
-            'remove_skewed_cells=remove_skewed_cells:main',
-            'sdist_to_direction=sdist_to_direction:main'
+            'contour_smooth=bismet.contour_smooth:main',
+            'prep_mesh_sdist=bismet.prep_mesh_sdist:main',
+            'remove_skewed_cells=bismet.remove_skewed_cells:main',
+            'sdist_to_direction=bismet.sdist_to_direction:main'
         ],
     }
 )
