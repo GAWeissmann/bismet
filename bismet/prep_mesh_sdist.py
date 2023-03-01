@@ -42,9 +42,10 @@ def prep_mesh_sdist(infile,res,bnd_shapefile,outdir=".",
     If a string, gives the name of a file describing the desired resolution of mesh. If a float, gives a global resolution. This may be modified with adapt_res.
     
     bnd_shapefile : str
-    Name of shapefile containing boundary polygons. The edge closest to the domain interior
+    Name of shapefile containing boundary polygons (or bloack polygons). The edge closest to the domain interior
     will represent the boundary. The polygon should mask all the wetted (no-data) parts just
-    outside the boundary for a distance equal to half the channel width. This buffer is required in order for the sdist output not to be affected by boundary effects.
+    outside the boundary for a distance equal to half the channel width. This buffer is required 
+    in order for the sdist output not to be affected by boundary effects.
     
     outdir : str
     Directory where outputs will be stored. Default is .
@@ -90,26 +91,29 @@ def prep_mesh_sdist(infile,res,bnd_shapefile,outdir=".",
     do_signed_distance = True # Don't change until fixed
     do_mesh = not res is None
     
-    # Get the image and calculate extent
+    # Read the LiDAR image and calculate extent
     file = infile
-    ds = gdal.Open(file)
-    gt = ds.GetGeoTransform()
-    band = ds.GetRasterBand(1)
-    im = band.ReadAsArray().astype("d")
-    [rows, cols] = im.shape
+    ds = gdal.Open(file)            # gdal dataset object
+    gt = ds.GetGeoTransform()       # get corrdinate of raster origin + xy resolution 
+    band = ds.GetRasterBand(1)      # get raster values
+    im = band.ReadAsArray().astype("d") # convert to array
+    [rows, cols] = im.shape         # lidar image nrow - ncol
     print(("Image shape: {}".format((im.shape,))))
     bounds = calc_extent(gt,rows,cols)
-    xmin,ymin,xmax,ymax = bounds
+    xmin,ymin,xmax,ymax = bounds    # pixel coordinate of corners
     print(("Image extent: {}".format((bounds,))))
     imagemax = im.max()
     imagemin = im.min()
-
+    
+    # pull and impose no data values
     print(("Image min: {} max: {}".format(imagemin,imagemax)))    
     ndv = ds.GetRasterBand(1).GetNoDataValue()
     print(("No data value for input image: {}".format(ndv)))
     assert ds.GetRasterBand(1).GetNoDataValue() < -1e6
+    
+    # assign nodata to area under the block polygons
     dsmask = create_masked_raster(ds,bnd_shapefile,"rastermasked.tif")
-    bmask = dsmask.GetRasterBand(1)
+    bmask = dsmask.GetRasterBand(1) 
     bim = bmask.ReadAsArray().astype("d")    
     assert bmask.GetNoDataValue() < -1e6
     bnanpart = bim < -1e6    
@@ -124,11 +128,12 @@ def prep_mesh_sdist(infile,res,bnd_shapefile,outdir=".",
     if do_label_1:
         print("label 1")
         
-        imt = np.where(bnanpart,1.,0.)
-        labeled, nr_objects = ndimage.label(imt)
+        imt = np.where(bnanpart,1.,0.) # make the nan part (water)= 1, the rest (land) = 0
+        labeled, nr_objects = ndimage.label(imt) # assign values to each regions (object)
         print(("Number of objects: {}".format(nr_objects)))
 
         vizlabeled = np.minimum(labeled,7)
+        # save and plot
         np.save(os.path.join(outdir,"cache_labeled_masked.npy"),labeled)
         plt.imshow(vizlabeled,cmap=plt.get_cmap("Set3"))
         plt.colorbar()
@@ -139,14 +144,13 @@ def prep_mesh_sdist(infile,res,bnd_shapefile,outdir=".",
         nr_objects = labeled.max()
     if do_segment:
         print("segment")
-        maxndx, maxsz = max_component_size(labeled,nr_objects)   
+        maxndx, maxsz = max_component_size(labeled,nr_objects) # find size of largest region  
         print(("Original image maxndx={} maxsz={}".format(maxndx,maxsz)))    
         labelndx1 = lab1 if lab1 > 0 else maxndx
         # First possibility is that this is part of the largest connected components
         # Second possibility is that it got masked by the boundary
         # polygons
         init = np.isclose(labeled,labelndx1) | ((labeled ==0) & nanpart)
-
         
         # smooths and disconnects very small openings
         im2 = binary_opening(init,disk(2))
@@ -177,9 +181,9 @@ def prep_mesh_sdist(infile,res,bnd_shapefile,outdir=".",
         print("signed distance")
         labelndx2=lab2 if lab2 >0 else maxndx2
         domain = np.where(np.isclose(labeled2,labelndx2),-1.,1.)
-        domain = ndimage.gaussian_filter(domain,sigma=(3,3),order=0)
+        domain = ndimage.gaussian_filter(domain,sigma=(3,3),order=0) #-1 for water, 1 for land
         labeled2=None
-        sdist = skfmm.distance(domain)
+        sdist = skfmm.distance(domain)  # fast marching method. Distance from boundary, -distance inside the mesh region, +distance outward 
         write_tiff(os.path.join(outdir,"sdist_%s.tif" % outdir),ds,sdist,no_data=None)
         plt.imshow(sdist) #,cmap=plt.get_cmap("Set3"))
         plt.colorbar()
@@ -189,7 +193,6 @@ def prep_mesh_sdist(infile,res,bnd_shapefile,outdir=".",
         sdistcachefile = os.path.join(cache_dir,"cache_sdist.npy")
         sdist = np.load("cache_sdist.npy")
      
-    
         
     if do_mesh:
         print("mesh")
@@ -197,10 +200,12 @@ def prep_mesh_sdist(infile,res,bnd_shapefile,outdir=".",
         print(ymax - ymin)
         print(domain.shape[0])
         print(xmax - xmin)
-              
+         
+        # make evently spaced mesh points
         yspace1d = np.linspace(0.5,domain.shape[0]-0.5,domain.shape[0])
         xspace1d = np.linspace(0.5,domain.shape[1]-0.5,domain.shape[1])
-
+        
+        # bivariate spline approximation over a rectangular mesh
         fdspline = RectBivariateSpline(xspace1d,yspace1d,sdist[::-1,:].T,kx=1,ky=1)
         paths,pointsets = paths_from_shapefile(bnd_shapefile,xmin,ymin)
 
@@ -219,6 +224,14 @@ def prep_mesh_sdist(infile,res,bnd_shapefile,outdir=".",
         
         
         def fd(p):
+            '''
+            make fd the signed function. fd is the signed distance from each node location p to the closest boundary
+
+            Parameters
+            ----------
+            p : Node positions
+    
+            '''
             d0 = poly_fd(p)
             d1 = fdspline(p[:,0],p[:,1],grid=False)   
             return np.maximum(-d0, d1)        
@@ -237,7 +250,8 @@ def prep_mesh_sdist(infile,res,bnd_shapefile,outdir=".",
 
         hdspline = RectBivariateSpline(xspace1d,yspace1d,imres[::-1,:].T,kx=1,ky=1)
         def hd(p):
-            return hdspline(p[:,0],p[:,1],grid=False)           
+            return hdspline(p[:,0],p[:,1],grid=False)
+        # Make the bounding box           
         bbox=(np.min(xspace1d),np.min(yspace1d),np.max(xspace1d),np.max(yspace1d))
         #bbox=(-500,-500,17000,17000)
         #bbox= (0,0,domain.shape[1],domain.shape[0])
@@ -246,16 +260,18 @@ def prep_mesh_sdist(infile,res,bnd_shapefile,outdir=".",
         if h0 is None: h0 = imres.min()
         #p,d=dm.distmesh2d(fd, dm.huniform, 4.0, bbox=bbox,fig='gcf')
         base = np.array([xmin,ymin])        
-        if not fixed_points is None:
+        if not fixed_points is None: # if there are fixed point added. Those will be set as node positions
             fixed_points = fixed_points - base
         #import datetime;
         #print ('before calling distmesh2d:', datetime.datetime.now() )
+        
+        # Make the mesh
         p,d=dm.distmesh2d(fd, hd, h0, bbox=bbox, pfix=fixed_points, fig='gcf', dptol=.06, ttol=.1,
               Fscale=1.2, deltat=.2, geps_multiplier=.001, densityctrlfreq=30)
         #print ('after calling distmesh2d:', datetime.datetime.now() )
         p=p + base
-        npt = p.shape[0]
-        ne = d.shape[0]
+        npt = p.shape[0] # number of points
+        ne = d.shape[0] # number of elements
         mesh = SchismMesh()
         mesh.allocate(ne,npt)
         for ip in range(npt):
@@ -375,15 +391,31 @@ def write_tiff(outfname,ds,arr_out,no_data=None,datatype=None):
     outdata = None
 
 def create_masked_raster(src_ds,polyfname,dst_fname):
+    '''
+    Masked the original lidar raster with the block polygons
+
+    Parameters
+    ----------
+    src_ds : gdal dataset object
+    polyfname : name of shapefiles with the block polygons
+    dst_fname : output raster file name
+
+    Returns
+    -------
+    target_ds : TYPE
+        DESCRIPTION.
+
+    '''
+    
     print(polyfname)
     source_shape = ogr.Open(polyfname)
-    source_layer = source_shape.GetLayer()
+    source_layer = source_shape.GetLayer()  # block polygons
     if os.path.exists(dst_fname):
         os.remove(dst_fname)
-    xmin,xmax,ymin,ymax = source_layer.GetExtent(0)    
-    target_ds = gdal.GetDriverByName("GTiff").CreateCopy(dst_fname,src_ds)
+    xmin,xmax,ymin,ymax = source_layer.GetExtent(0) 
+    target_ds = gdal.GetDriverByName("GTiff").CreateCopy(dst_fname,src_ds) # create a copy of the original
     # Rasterize
-    gdal.RasterizeLayer(target_ds, [1], source_layer, burn_values=[2.5])
+    gdal.RasterizeLayer(target_ds, [1], source_layer, burn_values=[2.5]) #Burns vector geometries into a raster, not sure why use burn = 2.5.
     target_ds.FlushCache() ##saves to disk!!
     return target_ds
     
