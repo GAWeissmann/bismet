@@ -20,7 +20,7 @@ from distmesh._distance_functions import dsegment
 
 def prep_mesh_sdist(infile,res,bnd_shapefile,outdir=".",
                     adapt_res=False,fixed_points=None,
-                    h0=None,cache_dir=None,lab1=0,lab2=0,):
+                    h0=None,cache_dir=None,lab1=0,lab2=0,seed=None):
     """ Create mesh and signed distance required for fdaPDE
     
     This function takes an image of lidar, an image representing 
@@ -63,6 +63,9 @@ def prep_mesh_sdist(infile,res,bnd_shapefile,outdir=".",
     that must be included. Sometimes used in distmesh 
     for things like corners. Default is None.
     
+    seed : int
+    To set a seed for the random number generator, default is None
+    
     """ 
     
     
@@ -85,6 +88,13 @@ def prep_mesh_sdist(infile,res,bnd_shapefile,outdir=".",
                 
     if not os.path.exists(cache_dir):
         raise ValueError("Cache directory {} does not exist".format(cache_dir))
+    
+    if seed is None:
+        np.random.seed(None)
+        print('No random seed selected, output mesh will not be reproducible')
+    else:
+        np.random.seed(seed)
+        print('random seed set to: ',seed)
     
     do_label_1 = True
     do_segment = True
@@ -429,7 +439,8 @@ def create_arg_parser():
     parser.add_argument('--adapt_res',action = 'store_true', default=False, help='resolution given by res is coarsened for some distance into interior.')    
     parser.add_argument('--outdir', dest = 'outdir', default=False,help='directory in which output is generated')
     parser.add_argument('--h0', dest = 'h0', type=float, default=None,help='resolution for initializing distmesh. Recomment a number slightly smaller than smallest res (e.g. 2.8 if smallest is 3.0')
-    parser.add_argument('--fixed', dest = 'fixedfile', type=str, default=None,help='csv file with one line header containing x,y fixed points that must be included in mesh. Not sure how needed this is,  but sometimes used in distmesh for corners.')    
+    parser.add_argument('--fixed', dest = 'fixedfile', type=str, default=None,help='csv file with one line header containing x,y fixed points that must be included in mesh.')    
+    parser.add_argument('--seed', dest = 'seed', type=int, default=None,help='Set a fix seed for the number generator')        
     return parser
                
 
@@ -446,6 +457,7 @@ def main():
     fixedf = args.fixedfile
     adapt_res = args.adapt_res  # True
     bnd_shapefile = args.bnd_shapefile
+    seed = args.seed
   
     
     if fixedf is not None:
@@ -460,7 +472,8 @@ def main():
             cache_dir=outdir,
             adapt_res = adapt_res,
             fixed_points = fixed_points,
-            h0 = h0)    
+            h0 = h0,
+            seed = seed)    
     
 if __name__=="__main__":
     main()    
