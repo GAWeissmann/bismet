@@ -18,7 +18,7 @@ from distmesh._distance_functions import dsegment
 
 #todo: get rid of hardwired assumptions of 1m (e.g. in rect spline)
 
-def prep_mesh_sdist(infile,res,bnd_shapefile,outdir=".",
+def prep_mesh_sdist(infile,bnd_shapefile,outdir=".",res=None,
                     adapt_res=False,fixed_points=None,
                     h0=None,cache_dir=None,lab1=0,lab2=0,seed=None):
     """ Create mesh and signed distance required for fdaPDE
@@ -39,7 +39,9 @@ def prep_mesh_sdist(infile,res,bnd_shapefile,outdir=".",
     geometry.
     
     res : float or str
-    If a string, gives the name of a file describing the desired resolution of mesh. If a float, gives a global resolution. This may be modified with adapt_res.
+    If a string, gives the name of a file describing the desired resolution of mesh. 
+    If a float, gives a global resolution. This may be modified with adapt_res.
+    if None: will only produce the signed distance and not make the mesh
     
     bnd_shapefile : str
     Name of shapefile containing boundary polygons (or bloack polygons). The edge closest to the domain interior
@@ -145,9 +147,10 @@ def prep_mesh_sdist(infile,res,bnd_shapefile,outdir=".",
         vizlabeled = np.minimum(labeled,7)
         # save and plot
         np.save(os.path.join(outdir,"cache_labeled_masked.npy"),labeled)
-        plt.imshow(vizlabeled,cmap=plt.get_cmap("Set3"))
-        plt.colorbar()
-        plt.show()
+        # plt.figure()
+        # plt.imshow(vizlabeled,cmap=plt.get_cmap("Set3"))
+        # plt.colorbar()
+        # plt.show()
     else:
         labcachefile = os.path.join(cache_dir,"cache_labeled_masked.npy")
         labeled = np.load(labcachefile)
@@ -176,9 +179,10 @@ def prep_mesh_sdist(infile,res,bnd_shapefile,outdir=".",
         write_tiff(label_outfile,ds,labeled2)
         np.save(os.path.join(outdir,"cache_labeled2.npy"),labeled2)       
         vizlabeled2 = np.minimum(labeled2,7)
-        plt.imshow(vizlabeled2,cmap=plt.get_cmap("Set3"))
-        plt.colorbar()
-        plt.show()
+        # plt.figure()
+        # plt.imshow(vizlabeled2,cmap=plt.get_cmap("Set3"))
+        # plt.colorbar()
+        # plt.show()
 
     else:
         lab2cachefile = os.path.join(cache_dir,"cache_labeled2.npy")    
@@ -195,6 +199,7 @@ def prep_mesh_sdist(infile,res,bnd_shapefile,outdir=".",
         labeled2=None
         sdist = skfmm.distance(domain)  # fast marching method. Distance from boundary, -distance inside the mesh region, +distance outward 
         write_tiff(os.path.join(outdir,"sdist_%s.tif" % outdir),ds,sdist,no_data=None)
+        plt.figure()
         plt.imshow(sdist) #,cmap=plt.get_cmap("Set3"))
         plt.colorbar()
         plt.show()
@@ -276,6 +281,7 @@ def prep_mesh_sdist(infile,res,bnd_shapefile,outdir=".",
         #print ('before calling distmesh2d:', datetime.datetime.now() )
         
         # Make the mesh
+        plt.figure()
         p,d=dm.distmesh2d(fd, hd, h0, bbox=bbox, pfix=fixed_points, fig='gcf', dptol=.06, ttol=.1,
               Fscale=1.2, deltat=.2, geps_multiplier=.001, densityctrlfreq=30)
         #print ('after calling distmesh2d:', datetime.datetime.now() )
@@ -290,6 +296,7 @@ def prep_mesh_sdist(infile,res,bnd_shapefile,outdir=".",
         for ie in range(ne):
             mesh.set_elem(ie,d[ie,:])
         write_mesh(mesh,os.path.join(outdir,"hgrid.gr3"))
+        print('Number of elements = ',ne)
         plt.show()
 
     band=None
