@@ -147,10 +147,17 @@ def prep_mesh_sdist(infile,bnd_shapefile,outdir=".",res=None,
         vizlabeled = np.minimum(labeled,7)
         # save and plot
         np.save(os.path.join(outdir,"cache_labeled_masked.npy"),labeled)
+<<<<<<< Updated upstream
         # plt.figure()
         # plt.imshow(vizlabeled,cmap=plt.get_cmap("Set3"))
         # plt.colorbar()
         # plt.show()
+=======
+        plt.imshow(vizlabeled,cmap=plt.get_cmap("Set3"))
+        plt.colorbar()
+        plt.savefig(os.path.join(outdir,"labeled_masked.png"), dpi=300)
+        plt.clf()
+>>>>>>> Stashed changes
     else:
         labcachefile = os.path.join(cache_dir,"cache_labeled_masked.npy")
         labeled = np.load(labcachefile)
@@ -179,10 +186,17 @@ def prep_mesh_sdist(infile,bnd_shapefile,outdir=".",res=None,
         write_tiff(label_outfile,ds,labeled2)
         np.save(os.path.join(outdir,"cache_labeled2.npy"),labeled2)       
         vizlabeled2 = np.minimum(labeled2,7)
+<<<<<<< Updated upstream
         # plt.figure()
         # plt.imshow(vizlabeled2,cmap=plt.get_cmap("Set3"))
         # plt.colorbar()
         # plt.show()
+=======
+        plt.imshow(vizlabeled2,cmap=plt.get_cmap("Set3"))
+        plt.colorbar()
+        plt.savefig(os.path.join(outdir,"labeled_components.png"), dpi=300)
+        plt.clf()
+>>>>>>> Stashed changes
 
     else:
         lab2cachefile = os.path.join(cache_dir,"cache_labeled2.npy")    
@@ -202,7 +216,8 @@ def prep_mesh_sdist(infile,bnd_shapefile,outdir=".",res=None,
         plt.figure()
         plt.imshow(sdist) #,cmap=plt.get_cmap("Set3"))
         plt.colorbar()
-        plt.show()
+        plt.savefig(os.path.join(outdir,f"sdist_{outdir}s.png"), dpi=300)
+        plt.clf()
     else: 
         raise NotImplementedError("code path is broken, must calculate sdist")
         sdistcachefile = os.path.join(cache_dir,"cache_sdist.npy")
@@ -296,8 +311,13 @@ def prep_mesh_sdist(infile,bnd_shapefile,outdir=".",res=None,
         for ie in range(ne):
             mesh.set_elem(ie,d[ie,:])
         write_mesh(mesh,os.path.join(outdir,"hgrid.gr3"))
+<<<<<<< Updated upstream
         print('Number of elements = ',ne)
         plt.show()
+=======
+        plt.savefig(os.path.join(outdir,"hgrid.png"), dpi=300)
+        plt.clf()
+>>>>>>> Stashed changes
 
     band=None
     gt=None

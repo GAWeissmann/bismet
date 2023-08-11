@@ -14,7 +14,7 @@ def create_arg_parser():
     parser.add_argument('--input', type=str)
     parser.add_argument('--output', type=str)
     parser.add_argument('--skewness', type=float, default=0.02)
-    parser.add_argument('--plot', type=bool, default=True)
+    parser.add_argument('--plot', type=bool, default="False")
     return parser
 
 def remove_skewed_cells(infile, outfile, skew_thr=0.02, ifplot=True):
@@ -49,13 +49,14 @@ def remove_skewed_cells(infile, outfile, skew_thr=0.02, ifplot=True):
         mesh.mark_elem_deleted(i)
     mesh.renumber()
     write_mesh(mesh, outfile)
-    if ifplot:
+    if ifplot == "True":
         fig = plt.figure()
         ax = fig.add_subplot(111)
         ax.hist(skewness, bins=20, log=True)
         ax.set_xlabel('Skewness')
         ax.set_ylabel('Count of cells')
-        plt.show()
+        plt.savefig('skewness.png', dpi=300)
+        plt.clf()
     
 
 def calculate_skewness(mesh):

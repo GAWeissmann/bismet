@@ -138,6 +138,7 @@ def convert_sdist_to_dir(input, output):
                  scale_units="inches",scale = 2,color = "white")
     
     fig.tight_layout()
+<<<<<<< Updated upstream
     plt.show()
 
 def make_var_res(dist_file, outfile, low_res, high_res, thr_dist):
@@ -201,6 +202,10 @@ def make_var_res(dist_file, outfile, low_res, high_res, thr_dist):
     plt.show()
     # write tiff
     write_tiff(outfile, dataset, array2)
+=======
+    plt.savefig(output.replace('.tiff', '.png').replace('.tif','.png'), dpi=300)
+    plt.clf()
+>>>>>>> Stashed changes
     
 def create_arg_parser():
     parser = argparse.ArgumentParser(

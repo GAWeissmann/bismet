@@ -1662,7 +1662,7 @@ class Mesh:
         remove_points = []
         for obs_point in self.observation_points:
             result = obs_point.clip_export_points()
-            if not result:
+            if result == False:
                 print(f'{obs_point.name} not within target polygon. Removing from observation points.')
                 remove_points.append(obs_point)
         self.observation_points = [obs_point for obs_point in self.observation_points if obs_point not in remove_points]
