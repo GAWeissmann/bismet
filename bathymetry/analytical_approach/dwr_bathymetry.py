@@ -33,6 +33,8 @@ import itertools
 # version of this module and is currently under development. THIS MODULE AND ASSOCIATED
 # SCRIPT FILES ARE PROVIDED ON AN "AS-IS" BASIS ONLY.
 
+# NOTE: All variable names and functionality are subject to change.
+
 # TODO: Make unit tests or control sites with some project locations.
 
 # TODO: Currently have partial PEP 8 formatting with some long lines
@@ -322,6 +324,8 @@ class SingleBeamBathyPoints(BathyPoints):
         :param z_m_name: (str) A field containing elevation values in NAVD88 m. Should be None if z_ft_name is used.
         :param color: (str) A matplotlib color for cross-section plotting. Not currently implemented. Default is None
                             (plot using matplotlib standards).
+        :param point_erase_poly: (str) A path to a feature class with polygon representing area where points should
+                                 be excluded from interpolation.
 
         Last revised: 07/05/2023
         """
@@ -486,8 +490,10 @@ class MultiBeamBathyPoints(BathyPoints):
         :param buffer_in: (str, ArcGIS linear units) A distance to buffer the dataset coverage polygon inwards to
                           account for decreased accuracy at the edge of the data and define the region where the script
                           should fit the values closely. The default is '-5 Meters'.
+        :param point_erase_poly: (str) Path to feature class containing polygons where observation points should
+                                 be removed from final clipped points used for interpolation.
 
-        Last revised: 07/05/2023
+        Last revised: 11/09/2023
         """
         super().__init__(data_short_name, data_long_name, precision, fmt, ms, zorder, fillstyle, alpha, color,
                          point_erase_poly=point_erase_poly)
@@ -506,7 +512,12 @@ class MultiBeamBathyPoints(BathyPoints):
         arcpy.Clip_management(self.bathy_raster_path, '#', bathy_ras, self.mesh.boundary,
                               clipping_geometry='ClippingGeometry')
         arcpy.Resample_management(bathy_ras, bathy_resample, '2 2', 'BILINEAR')
-        arcpy.RasterToPoint_conversion(bathy_resample, bathy_clip)
+        if self.point_erase_poly is not None:
+            arcpy.CopyFeatures_management(self.point_erase_poly, 'point_erase_poly')
+            arcpy.RasterToPoint_conversion(bathy_resample, 'temp_clip')
+            arcpy.Erase_analysis('temp_clip', self.point_erase_poly, bathy_clip)
+        else:
+            arcpy.RasterToPoint_conversion(bathy_resample, bathy_clip)
         if int(arcpy.GetCount_management(bathy_clip)[0]) == 0:
             return False
         for field in ['POINT_X', 'POINT_Y', 'POINT_Z']:
@@ -630,8 +641,10 @@ class ShorelinePoints(ObservationPoints):
         :param alpha: (float) A matplotlib float value representing transparency, with 1 being completely opaque and
                       0 being completely transparent. Default is 1.
         :param color: (str) A matplotlib color for cross-section plotting. Not currently implemented.
+        :param point_erase_poly: (str) Path to feature class containing polygons where observation points should
+                                 be removed from final clipped points used for interpolation.
 
-        Last revised: 07/05/2023
+        Last revised: 11/09/2023
         """
         super().__init__(data_short_name, data_long_name, precision, fmt, ms, zorder, fillstyle, alpha, color,
                          point_erase_poly=point_erase_poly)
@@ -723,8 +736,10 @@ class LiDARPoints(ShorelinePoints):
                                        that overlap areas where shoreline points are already generated. Default is None.
         :param buffer_in: (str, ArcGIS linear unit) A buffer distance to be used for adjusting the coverage polygon
                                                     extents. Default is '-5 Meters'.
+        :param point_erase_poly: (str) Path to feature class containing polygons where observation points should
+                                 be removed from final clipped points used for interpolation.
 
-        Last revised: 07/05/2023
+        Last revised: 11/09/2023
         """
         super().__init__(data_short_name, data_long_name, precision, fmt, ms, zorder, fillstyle,
                          alpha, point_erase_poly=point_erase_poly)
@@ -841,8 +856,10 @@ class AugmentPoints(LiDARPoints):
                             (plot using matplotlib standards).
         :param buffer_in: (str, ArcGIS linear unit) A buffer distance to be used for adjusting the coverage polygon
                                                     extents. Default is '-5 Meters'.
+        :param point_erase_poly: (str) Path to feature class containing polygons where observation points should
+                                 be removed from final clipped points used for interpolation.
 
-        Last revised: 07/05/2023
+        Last revised: 11/09/2023
         """
         super().__init__(lidar_pts_fc_path, data_short_name, data_long_name, precision, fmt=fmt, ms=ms, zorder=zorder,
                          fillstyle=fillstyle, alpha=alpha, z_ft_name=z_ft_name, z_m_name=z_m_name,
@@ -1248,6 +1265,259 @@ class VariableCase(Case):
         if os.path.exists(path):
             return path
 
+    # For the time being, pass aniso_polygons and diff_polygons to the function since they are not part of the
+    # case object.
+    def export(self, export_folder_name, export_type='all', aniso_polygons=None, diff_polygons=None,
+               custom_yaml_template_file=None, xs_fc=None, xs_qaqc_folder_name=None, fit_plot_qaqc_folder_name=None,
+               island_removed_target_polygon=None):
+        """Export case and all important inputs (except 2m, 10m, and source DEM's)."""
+        mesh = self.mesh
+        analysis = mesh.analysis
+        reach = analysis.reach
+        project = reach.project
+        # Set up new folder. If it already exists, raise an error to prevent co-mingling of files.
+        new_folder = os.path.join(project.project_folder_path, export_folder_name)
+        if os.path.exists(new_folder):
+            raise RuntimeError(f'{new_folder} already exists.')
+        else:
+            os.makedirs(new_folder)
+
+        if export_type in ['all', 'inputs', 'inputs_results']:
+            self._export_inputs(export_folder_name, aniso_polygons, diff_polygons, custom_yaml_template_file,
+                                island_removed_target_polygon)
+
+        if export_type in ['all', 'results', 'inputs_results', 'results_qaqc']:
+            self._export_results(export_folder_name)
+
+        if export_type in ['all', 'qaqc', 'results_qaqc']:
+            self._export_qaqc(export_folder_name, xs_fc, xs_qaqc_folder_name, fit_plot_qaqc_folder_name)
+
+    def _export_inputs(self, export_folder_name, aniso_polygons=None, diff_polygons=None, custom_yaml_template_file=None,
+                       island_removed_target_polygon=None):
+        mesh = self.mesh
+        analysis = mesh.analysis
+        reach = analysis.reach
+        project = reach.project
+        gis_file_list = []
+
+        # Export analysis level files.
+        gis_file_list += [analysis.breaklines_fc_path, mesh.block_polygon_input_fc_path]
+
+        # Export mesh input files.
+        gis_file_list += [mesh.domain_polygon_input_fc_path, mesh.open_boundary_input_fc_path]
+
+        # Export custom angle raster, if present
+        if mesh.in_angle_raster is not None:
+            if island_removed_target_polygon is None:
+                raise ValueError(f'Please provide island removed target polygon path for {mesh.in_angle_raster}. Use the island_removed_target_polygon keyword to specify this.')
+            gis_file_list += [mesh.in_angle_raster, island_removed_target_polygon]
+
+        # Export observation points.
+        # TODO: In the future, read from the fdaPDE yaml file to ensure changes in observation point variables
+        #  do not result in the wrong points being exported. This part is excluded for now to save on budget.
+        for obs_pt in mesh.observation_points:
+            if not (type(obs_pt) == ShorelinePoints) and not (type(obs_pt) == LiDARPoints):
+                if hasattr(obs_pt, 'bathy_pts_fc_path') and (obs_pt.bathy_pts_fc_path is not None):
+                    gis_file_list += [obs_pt.bathy_pts_fc_path] # Bathymetry points
+                if hasattr(obs_pt, 'bathy_raster_path') and (obs_pt.bathy_raster_path is not None):
+                    gis_file_list += [obs_pt.bathy_raster_path] # Bathymetry raster
+                if hasattr(obs_pt, 'point_erase_poly') and (obs_pt.point_erase_poly is not None):
+                    gis_file_list += [obs_pt.point_erase_poly] # Point removal polygon
+                if hasattr(obs_pt, 'coverage_fc') and (obs_pt.coverage_fc is not None):
+                    gis_file_list += [obs_pt.coverage_fc] # User-defined coverage polygon
+                if type(obs_pt) == ManualBathyPoints:
+                    gis_file_list += [obs_pt.csv_path]  # User-defined raw csv file
+
+        # Export case level files.
+        gis_file_list += [aniso_polygons, diff_polygons] # Anisotropy revision polygons (and diffusion if included)
+
+        # Export custom yaml file, if present
+        if custom_yaml_template_file is not None:
+            self._copy_file(rf'{project.project_folder_path}\resources\{custom_yaml_template_file}', export_folder_name)
+
+        # Use a set to remove duplicate file paths (often used in multipurpose files such as coverages that can also be used
+        # to remove points, or aniso/diff files).
+        for file in set(gis_file_list):
+            self._copy_gis(file, export_folder_name)
+
+    def _export_results(self, export_folder_name):
+        mesh = self.mesh
+        analysis = mesh.analysis
+        reach = analysis.reach
+        project = reach.project
+        gis_file_list = []
+        file_list = []
+
+        # Export check files that are relevant to current case and mesh.
+        txt_glob = glob.glob(rf'{analysis.working_directory.full_path}\*.txt', recursive=False)
+        check_files = [txt for txt in txt_glob if f'_FDAPDEAnalysis_{mesh.name}' in txt]
+        for check_file in check_files:
+            fns = ['create_variable_aniso_ratio', 'create_variable_diff_coeff', 'set_up_yaml_file', 'run_fda_pde']
+            fn_check = [fn in check_file for fn in fns]
+            if any(fn_check) and (self.name in check_file):
+                file_list += [check_file]
+            elif not any(fn_check):
+                file_list += [check_file]
+
+        # Export masked raster.
+        file_list += [rf'{analysis.working_directory.full_path}\rastermasked.tif']
+
+        # Export fdaPDE yaml file.
+        file_list += [rf'{analysis.working_directory.full_path}\{mesh.name}_{self.name}.yaml']
+
+        # Export fdaPDE result file.
+        file_list += [rf'{analysis.working_directory.full_path}\{mesh.name}_{self.name}_fdaPDE_output.txt']
+
+        # Export all mesh preparation steps, case preparation steps, and fdaPDE results. Due to the number of files,
+        # this is best done by including what is relevant and then subtracting out everything else.
+
+        # Start with only the non-geodatabase files within the mesh folder.
+        mesh_folder_files = [file for file in glob.glob(rf'{mesh.working_dir}\*', recursive=False) if os.path.isfile(file)]
+        include_set = set()
+
+        # If the case name matches, it belongs in the list regardless. This matches all fdaPDE outputs and coefficient
+        # generation files that are not .gdb.
+        include_set = include_set.union({file for file in mesh_folder_files if self.name in file})
+
+        # If an observation point name is present, it belongs in the list.
+        # TODO: In the future, read from the fdaPDE yaml file to ensure changes in observation point variables
+        #  do not result in the wrong points being exported. This part is excluded for now to save on budget.
+        for obs_pt in mesh.observation_points:
+            include_set = include_set.union({file for file in mesh_folder_files if obs_pt.name in file})
+
+        # Include target points
+        include_set = include_set.union({file for file in mesh_folder_files if f'{mesh.name}_target_pts' in file})
+
+        # Include signed distance
+        include_set = include_set.union({file for file in mesh_folder_files if f'sdist_{mesh.name}' in file})
+
+        # Include mesh points and polygon
+        include_set = include_set.union({file for file in mesh_folder_files if 'out_point' in file})
+        include_set = include_set.union({file for file in mesh_folder_files if 'out_polygon' in file})
+
+        # Include final mesh
+        include_set = include_set.union({file for file in mesh_folder_files if f'{mesh.name}_out.gr3' in file})
+
+        # Include files from mesh generation steps
+        for mesh_file in ['cache_labeled_masked.npy', 'cache_labeled2.npy', 'dem_list.yaml', 'dem_misses.txt',
+                          'hgrid.gr3', 'hgrid.png', 'hgrid_mod.gr3', 'labeled_components.png', 'labeled_components.tif',
+                          'labeled_masked.png', 'main.yaml', 'main_echo.yaml', 'prepare_schism.log']:
+            include_set = include_set.union({file for file in mesh_folder_files if mesh_file in file})
+
+        # Include angle raster files. If a custom angle file is specified, this may have any number of names.
+        include_set = include_set.union({file for file in mesh_folder_files if f'angle_{mesh.name}' in file})
+
+        # Up to this point, include_set should include all files that are not extraneous cases or observation points.
+        # Copy these files over. Since this will include all GIS supporting files, treat them all as individual files.
+        for file in include_set.union(set(file_list)):
+            self._copy_file(file, export_folder_name)
+
+        # Now focus on the individual file folders and geodatabases that are not part of the QAQC steps.
+        mesh_folder_folders = [file for file in glob.glob(rf'{mesh.working_dir}\*', recursive=False) if
+                             not os.path.isfile(file)]
+        include_non_qaqc_folder_set = set()
+
+        # Include all observation point generation geodatabases.
+        for obs_pt in mesh.observation_points:
+            include_non_qaqc_folder_set = include_non_qaqc_folder_set.union({folder for folder in mesh_folder_folders if obs_pt.name in folder})
+
+        # Include all coefficient generation geodatabases.
+        include_non_qaqc_folder_set = include_non_qaqc_folder_set.union({folder for folder in mesh_folder_folders if f'{self.name}_aniso.gdb' in folder})
+        include_non_qaqc_folder_set = include_non_qaqc_folder_set.union(
+            {folder for folder in mesh_folder_folders if f'{self.name}_diff.gdb' in folder})
+
+        # Include intermediate process folders and target point geodatabase.
+        for name in ['_inputs', 'boundary', 'clip_target_tmp.gdb']:
+            include_non_qaqc_folder_set = include_non_qaqc_folder_set.union(
+                {folder for folder in mesh_folder_folders if name in folder})
+
+        # Now copy these folders over.
+        for folder in include_non_qaqc_folder_set:
+            self._copy_folder(folder, export_folder_name)
+
+    def _export_qaqc(self, export_folder_name, xs_fc=None, xs_qaqc_folder=None, fit_plot_qaqc_folder=None):
+        mesh = self.mesh
+        analysis = mesh.analysis
+        reach = analysis.reach
+        project = reach.project
+        gis_file_list = []
+        file_list = []
+        folder_list = []
+
+        if xs_fc is not None:
+            gis_file_list += [xs_fc]
+
+        if xs_qaqc_folder is not None:
+            folder_list += [rf'{mesh.working_dir}\{xs_qaqc_folder}']
+
+        if fit_plot_qaqc_folder is not None:
+            folder_list += [rf'{mesh.working_dir}\{fit_plot_qaqc_folder}']
+
+        if gis_file_list:
+            for fc in gis_file_list:
+                self._copy_gis(fc, export_folder_name)
+
+        if folder_list:
+            for folder in folder_list:
+                self._copy_folder(folder, export_folder_name)
+
+    def _copy_main(self, file, export_folder_name, copy_function):
+        rel_path = self._get_relative_path(file)
+        mesh = self.mesh
+        analysis = mesh.analysis
+        reach = analysis.reach
+        project = reach.project
+        copy_folder = os.path.join(project.project_folder_path, export_folder_name)
+        new_file = os.path.join(copy_folder, rel_path)
+        new_file_folder = str(pathlib.PureWindowsPath(new_file).parent)
+        if not os.path.exists(new_file_folder):
+            os.makedirs(new_file_folder)
+        print(f'Copying {file} to {new_file}...')
+        copy_function(file, new_file)
+        return new_file
+
+    def _copy_folder(self, folder, export_folder_name):
+        return self._copy_main(folder, export_folder_name, shutil.copytree)
+
+    def __copy_geodatabase(self, gdb_data, export_folder_name):
+        rel_path = self._get_relative_path(gdb_data)
+        mesh = self.mesh
+        analysis = mesh.analysis
+        reach = analysis.reach
+        project = reach.project
+        copy_folder = os.path.join(project.project_folder_path, export_folder_name)
+        new_gdb_data = os.path.join(copy_folder, rel_path)
+        gdb_path = re.findall(r'(.*?\.gdb)*', new_gdb_data)[0]
+        gdb_parent_path = str(pathlib.PureWindowsPath(gdb_path).parent)
+        gdb_name = pathlib.PureWindowsPath(gdb_path).name
+        if not os.path.exists(gdb_parent_path):
+            os.makedirs(gdb_parent_path)
+        if not os.path.exists(gdb_path):
+            arcpy.CreateFileGDB_management(gdb_parent_path, gdb_name)
+        print(f'Copying {gdb_data} to {new_gdb_data}...')
+        arcpy.Copy_management(gdb_data, new_gdb_data)
+        return new_gdb_data
+
+    def _copy_gis(self, file, export_folder_name):
+        if not '.gdb' in file:
+            return self._copy_main(file, export_folder_name, arcpy.Copy_management)
+        else:
+            return self.__copy_geodatabase(file, export_folder_name)
+
+    def _copy_file(self, file, export_folder_name):
+        return self._copy_main(file, export_folder_name, shutil.copy2)
+
+    def _get_relative_path(self, file):
+        mesh = self.mesh
+        analysis = mesh.analysis
+        reach = analysis.reach
+        project = reach.project
+        if project.project_folder_path not in file:
+            raise ValueError(f'{file} is not within project directory.')
+        else:
+            result = os.path.relpath(file, project.project_folder_path)
+        return result
+
 
 class FDAPDEResult:
     def __init__(self, case):
@@ -1274,7 +1544,8 @@ class FDAPDEResult:
 
 class Mesh:
     def __init__(self, name, analysis, domain_polygon_fc_path, block_polygon_fc_path, open_boundary_fc_path, res=3.0,
-                 res_hint_poly_fc_path=None, h0=2.8, seed=1000, res_sdist_list=None, in_angle_raster=None):
+                 res_hint_poly_fc_path=None, h0=2.8, seed=1000, res_sdist_list=None, in_angle_raster=None,
+                 bathymetry_raster_targets=None):
         self.analysis = analysis
         self.case = {}
         self.name = name
@@ -1291,12 +1562,29 @@ class Mesh:
         self._initialize()
         self.res_sdist_list = res_sdist_list
         self._in_angle_raster = in_angle_raster
+        self._bathymetry_raster_targets = bathymetry_raster_targets
 
     def __getitem__(self, name):
         if type(name) == str:
             return self.case[name]
         elif type(name) in (int, slice):
             return tuple(self.case.values())[name]
+
+    @property
+    def domain_polygon_input_fc_path(self):
+        return self._domain_polygon_input_fc_path
+
+    @property
+    def block_polygon_input_fc_path(self):
+        return self._block_polygon_input_fc_path
+
+    @property
+    def open_boundary_input_fc_path(self):
+        return self._open_boundary_input_fc_path
+
+    @property
+    def bathymetry_raster_targets(self):
+        return self._bathymetry_raster_targets
 
     @property
     def working_dir(self):
@@ -1313,6 +1601,10 @@ class Mesh:
         path = rf'{self.working_dir}\res_hint\{self.res_name}.shp'
         if os.path.exists(path):
             return path
+
+    @property
+    def in_angle_raster(self):
+        return self._in_angle_raster
 
     @property
     def res(self):
@@ -1372,6 +1664,7 @@ class Mesh:
 
     @analysis_step
     def clip_dem(self):
+        bathymetry_rasters = []
         dem_mask = rf'{self.input_path}\dem_mask.tif'
         self.analysis.gpr.record(arcpy.AddField_management, rf'{self.domain_polygon_fc_path}', 'Elev',
                                  'DOUBLE')
@@ -1403,8 +1696,26 @@ class Mesh:
         dem_clip_2 = rf'{self.input_path}\dem_domain_clip_1m.tif'
         self.analysis.gpr.record(arcpy.Resample_management, dem_preprocess, dem_clip_2, '1 1', 'BILINEAR')
 
+        if type(self._bathymetry_raster_targets) == list:
+            old_snap = arcpy.env.snapRaster
+            arcpy.env.snapRaster = dem_clip_2
+            dem_preclip = rf'{self.input_path}\dem_domain_clip_1m_multibeam.tif'
+            for bathy_raster in self._bathymetry_raster_targets:
+                bathy_raster_name = pathlib.PureWindowsPath(bathy_raster).stem
+                bathy_resample = rf'{self.input_path}\{bathy_raster_name}_resample.tif'
+                self.analysis.gpr.record(arcpy.Resample_management, bathy_raster, bathy_resample, '1 1',
+                                         'BILINEAR')
+                bathymetry_rasters.append(bathy_resample)
+            self.analysis.gpr.record(arcpy.MosaicToNewRaster_management, ';'.join(bathymetry_rasters + [dem_clip_2]),
+                                     rf'{self.input_path}', 'dem_domain_clip_1m_bathy_raster.tif',
+                                     pixel_type='32_BIT_FLOAT', cellsize=1, number_of_bands=1, mosaic_method='FIRST')
+            # dem_preclip = resampled multibeams merged with dem_clip_2
+            arcpy.env.snapRaster = old_snap
+        else:
+            dem_preclip = dem_clip_2
+
         dem_clip_1m = rf'{self.input_path}\dem_domain_clip_no_water_1m.tif'
-        self.analysis.gpr.record(arcpy.Clip_management, dem_clip_2, '#',
+        self.analysis.gpr.record(arcpy.Clip_management, dem_preclip, '#',
                                  dem_clip_1m,
                                  in_template_dataset=domain_erase, nodata_value=-3.402823e38,
                                  clipping_geometry='ClippingGeometry')
@@ -1829,6 +2140,7 @@ class Mesh:
         ax2.axvline(precision, ls='--', color='black', lw=1)
         ax2.set_title(result_name_title)
         plt.grid(which='minor', color='#dddddd', lw=0.8)
+        ax2.yaxis.set_major_locator(tkr.MultipleLocator(20000))
         # ax2.yaxis.set_minor_locator(tkr.AutoMinorLocator())
         # ax2.xaxis.set_minor_locator(tkr.AutoMinorLocator())
         ax2.yaxis.set_major_formatter(tkr.StrMethodFormatter('{x:0,.0f}'))
@@ -2045,4 +2357,4 @@ def add_point_fields(fc, point_z=True):
     for field in ['POINT_X', 'POINT_Y'] + pz:
         arcpy.AddField_management(fc, field, 'DOUBLE')
     arcpy.CalculateField_management(fc, 'POINT_X', '!Shape.Centroid.X!', 'PYTHON')
-    arcpy.CalculateField_management(fc, 'POINT_Y', '!Shape.Centroid.Y!', 'PYTHON')
+    arcpy.CalculateField_managem
